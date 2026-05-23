@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "categorize",
+    srcs = ["categorizer.go"],
+    importpath = "github.com/ChrisVandoo/budgetbuddy/internal/categorize",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/db",
+        "//internal/types",
+    ],
+)
+
+go_test(
+    name = "categorize_test",
+    srcs = ["categorizer_test.go"],
+    deps = [
+        ":categorize",
+        "//internal/db",
+    ],
+)

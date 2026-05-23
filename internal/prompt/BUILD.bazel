@@ -1,0 +1,27 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "prompt",
+    srcs = [
+        "category_selector.go",
+        "source_wizard.go",
+    ],
+    importpath = "github.com/ChrisVandoo/budgetbuddy/internal/prompt",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/db",
+        "//internal/types",
+        "@com_github_charmbracelet_bubbles//textinput:go_default_library",
+        "@com_github_charmbracelet_bubbletea//:go_default_library",
+    ],
+)
+
+go_test(
+    name = "prompt_test",
+    srcs = ["prompt_test.go"],
+    deps = [
+        ":prompt",
+        "//internal/db",
+        "//internal/types",
+    ],
+)
