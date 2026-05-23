@@ -1,0 +1,22 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "db",
+    srcs = [
+        "db.go",
+        "migrations.go",
+        "models.go",
+    ],
+    importpath = "github.com/ChrisVandoo/budgetbuddy/internal/db",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/types",
+        "@com_github_mattn_go_sqlite3//:go_default_library",
+    ],
+)
+
+go_test(
+    name = "db_test",
+    srcs = ["db_test.go"],
+    deps = [":db"],
+)

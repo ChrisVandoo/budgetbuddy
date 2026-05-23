@@ -1,0 +1,35 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cmd",
+    srcs = [
+        "config.go",
+        "config_category.go",
+        "config_rule.go",
+        "config_source.go",
+        "edit.go",
+        "parse.go",
+        "report.go",
+        "root.go",
+    ],
+    importpath = "github.com/ChrisVandoo/budgetbuddy/internal/cmd",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/categorize",
+        "//internal/db",
+        "//internal/parse",
+        "//internal/types",
+        "@com_github_spf13_cobra//:go_default_library",
+    ],
+)
+
+go_test(
+    name = "cmd_test",
+    srcs = ["cmd_test.go"],
+    deps = [
+        ":cmd",
+        "//internal/db",
+        "//internal/parse",
+        "//internal/types",
+    ],
+)
