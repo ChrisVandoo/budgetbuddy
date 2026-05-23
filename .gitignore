@@ -30,3 +30,7 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Bazel
+MODULE.bazel.lock
+bazel-*
