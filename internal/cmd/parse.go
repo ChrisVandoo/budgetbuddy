@@ -9,37 +9,35 @@ import (
 
 	"github.com/ChrisVandoo/budgetbuddy/internal/categorize"
 	"github.com/ChrisVandoo/budgetbuddy/internal/parse"
-	"github.com/ChrisVandoo/budgetbuddy/internal/types"
 )
 
 func parseCmd() *cobra.Command {
-	var sourceName string
-
 	c := &cobra.Command{
 		Use:   "parse [paths...]",
 		Short: "Import CSV files",
 		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			for _, arg := range args {
-				info, err := os.Stat(arg)
+		RunE: func(cmd *cobra.Command, paths []string) error {
+			for _, path := range paths {
+				info, err := os.Stat(path)
 				if err != nil {
-					return fmt.Errorf("access %s: %w", arg, err)
+					return fmt.Errorf("access %s: %w", path, err)
 				}
 
 				if info.IsDir() {
-					entries, err := os.ReadDir(arg)
+					entries, err := os.ReadDir(path)
 					if err != nil {
-						return fmt.Errorf("read dir %s: %w", arg, err)
+						return fmt.Errorf("read dir %s: %w", path, err)
 					}
 					for _, entry := range entries {
 						if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".csv") {
-							if err := processCSVFile(cmd, arg+"/"+entry.Name(), sourceName); err != nil {
+							filename := fmt.Sprintf("%s/%s", path, entry.Name())
+							if err := processCSVFile(cmd, filename); err != nil {
 								return err
 							}
 						}
 					}
 				} else {
-					if err := processCSVFile(cmd, arg, sourceName); err != nil {
+					if err := processCSVFile(cmd, path); err != nil {
 						return err
 					}
 				}
@@ -47,12 +45,10 @@ func parseCmd() *cobra.Command {
 			return nil
 		},
 	}
-
-	c.Flags().StringVar(&sourceName, "source", "", "Source name (skip auto-detection)")
 	return c
 }
 
-func processCSVFile(cmd *cobra.Command, path, sourceName string) error {
+func processCSVFile(cmd *cobra.Command, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
@@ -69,32 +65,16 @@ func processCSVFile(cmd *cobra.Command, path, sourceName string) error {
 		return fmt.Errorf("load sources: %w", err)
 	}
 
-	srcName := sourceName
-	var mapping types.SourceMapping
-
-	if sourceName != "" {
-		found := false
-		for _, src := range sources.Sources {
-			if src.Name == sourceName {
-				mapping = src.Mapping
-				found = true
-				break
-			}
+	_, config, found := parse.DetectSource(headers, sources)
+	if !found {
+		// TODO: this should be updated so that if we don't detect any sources, we use the source wizard to add a new source
+		if len(sources.Sources) == 0 {
+			return fmt.Errorf("no sources configured")
 		}
-		if !found {
-			return fmt.Errorf("source %q not found in config", sourceName)
-		}
-	} else {
-		_, config, found := parse.DetectSource(headers, sources)
-		if !found {
-			if len(sources.Sources) == 0 {
-				return fmt.Errorf("no sources configured")
-			}
-			return fmt.Errorf("unknown headers in %s", path)
-		}
-		srcName = config.Name
-		mapping = config.Mapping
+		return fmt.Errorf("unknown headers in %s", path)
 	}
+	srcName := config.Name
+	mapping := config.Mapping
 
 	f, err = os.Open(path)
 	if err != nil {
