@@ -5,10 +5,12 @@ import (
 	"os"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
 	"github.com/ChrisVandoo/budgetbuddy/internal/categorize"
 	"github.com/ChrisVandoo/budgetbuddy/internal/parse"
+	"github.com/ChrisVandoo/budgetbuddy/internal/prompt"
 )
 
 func parseCmd() *cobra.Command {
@@ -53,11 +55,16 @@ func processCSVFile(cmd *cobra.Command, path string) error {
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}
+	defer f.Close()
 
-	headers, err := parse.ReadCSVHeaders(f)
-	f.Close()
+	parser := parse.NewParser()
+	if err := parser.ReadCSVFile(f); err != nil {
+		return fmt.Errorf("failed to read %s: %w", path, err)
+	}
+
+	headers, err := parser.GetHeaderRecord()
 	if err != nil {
-		return fmt.Errorf("read headers from %s: %w", path, err)
+		return fmt.Errorf("failed to get headers for %s: %w", path, err)
 	}
 
 	sources, err := parse.LoadSources(sourcesPath)
@@ -65,32 +72,36 @@ func processCSVFile(cmd *cobra.Command, path string) error {
 		return fmt.Errorf("load sources: %w", err)
 	}
 
-	_, config, found := parse.DetectSource(headers, sources)
+	headerKey, config, found := parse.DetectSource(headers, sources)
 	if !found {
-		// TODO: this should be updated so that if we don't detect any sources, we use the source wizard to add a new source
-		if len(sources.Sources) == 0 {
-			return fmt.Errorf("no sources configured")
+		wizard := prompt.NewSourceWizard(headers, path)
+		prog := tea.NewProgram(wizard)
+		model, err := prog.Run()
+		if err != nil {
+			return fmt.Errorf("source wizard: %w", err)
 		}
-		return fmt.Errorf("unknown headers in %s", path)
+		wiz := model.(*prompt.SourceWizard)
+		if wiz.Cancelled() {
+			return fmt.Errorf("source creation cancelled")
+		}
+		newConfig := wiz.Config()
+		headerKey = strings.Join(headers, ",")
+		sources.Sources[headerKey] = newConfig
+		if err := parse.SaveSources(sourcesPath, sources); err != nil {
+			return fmt.Errorf("save new source: %w", err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Created new source '%s' for %s\n", newConfig.Name, headerKey)
+		config = &newConfig
 	}
-	srcName := config.Name
-	mapping := config.Mapping
 
-	f, err = os.Open(path)
-	if err != nil {
-		return fmt.Errorf("re-open %s: %w", path, err)
-	}
-	defer f.Close()
-
-	parser := parse.NewParser(srcName, mapping)
-	txns, err := parser.Parse(f)
+	transactions, err := parser.ParseRecords(config.Mapping, config.Name)
 	if err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
 
 	imported := 0
 	skipped := 0
-	for _, txn := range txns {
+	for _, txn := range transactions {
 		_, err := database.InsertTransaction(txn.Source, txn.Date, txn.Description, txn.AmountCents, nil)
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE constraint") {

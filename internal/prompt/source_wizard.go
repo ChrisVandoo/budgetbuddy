@@ -26,16 +26,17 @@ const (
 )
 
 type SourceWizard struct {
-	headers   []string
-	step      wizardStep
-	inputs    []textinput.Model
-	inputIdx  int
-	config    types.SourceConfig
-	done      bool
-	err       error
+	headers  []string
+	filename string
+	step     wizardStep
+	inputs   []textinput.Model
+	inputIdx int
+	config   types.SourceConfig
+	done     bool
+	err      error
 }
 
-func NewSourceWizard(headers []string) *SourceWizard {
+func NewSourceWizard(headers []string, filename string) *SourceWizard {
 	makeInput := func(placeholder string) textinput.Model {
 		ti := textinput.New()
 		ti.Placeholder = placeholder
@@ -47,6 +48,7 @@ func NewSourceWizard(headers []string) *SourceWizard {
 
 	return &SourceWizard{
 		headers:  headers,
+		filename: filename,
 		step:     stepName,
 		inputs:   []textinput.Model{makeInput("e.g., My Bank")},
 		config: types.SourceConfig{
@@ -66,16 +68,36 @@ func (m *SourceWizard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "q":
+		switch {
+		case m.step == stepAmountType && msg.String() == "1":
+			m.step = stepSingleColumn
+			m.inputs = []textinput.Model{m.makeDropdown("Amount")}
+			m.inputIdx = 0
+			return m, nil
+		case m.step == stepAmountType && msg.String() == "2":
+			m.step = stepDualInColumn
+			m.inputs = []textinput.Model{m.makeDropdown("Money In")}
+			m.inputIdx = 0
+			return m, nil
+		case m.step == stepSingleSign && msg.String() == "y":
+			m.config.Mapping.Amount.IsPositiveMoneyIn = true
+			m.step = stepDone
+			m.done = true
+			return m, tea.Quit
+		case m.step == stepSingleSign && msg.String() == "n":
+			m.config.Mapping.Amount.IsPositiveMoneyIn = false
+			m.step = stepDone
+			m.done = true
+			return m, tea.Quit
+		case msg.String() == "ctrl+c", msg.String() == "q":
 			m.done = true
 			m.err = fmt.Errorf("cancelled")
 			return m, tea.Quit
-		case "enter":
+		case msg.String() == "enter":
 			return m.handleEnter()
-		case "up":
+		case msg.String() == "up":
 			return m.handleUp(), nil
-		case "down":
+		case msg.String() == "down":
 			return m.handleDown(), nil
 		}
 	}
@@ -139,10 +161,7 @@ func (m *SourceWizard) handleEnter() (tea.Model, tea.Cmd) {
 		m.inputIdx = 0
 
 	case stepAmountType:
-		// This step uses keypress selection, handled below
-		m.step = stepSingleColumn
-		m.inputs = []textinput.Model{m.makeDropdown("Amount")}
-		m.inputIdx = 0
+		return m, nil
 
 	case stepSingleColumn:
 		col := strings.TrimSpace(m.inputs[0].Value())
@@ -158,9 +177,7 @@ func (m *SourceWizard) handleEnter() (tea.Model, tea.Cmd) {
 		m.inputIdx = 0
 
 	case stepSingleSign:
-		m.step = stepDone
-		m.done = true
-		return m, tea.Quit
+		return m, nil
 
 	case stepDualInColumn:
 		inCol := strings.TrimSpace(m.inputs[0].Value())
@@ -187,7 +204,12 @@ func (m *SourceWizard) handleEnter() (tea.Model, tea.Cmd) {
 }
 
 func (m *SourceWizard) makeDropdown(placeholder string) textinput.Model {
-	return textinput.New()
+	ti := textinput.New()
+	ti.Placeholder = placeholder
+	ti.Focus()
+	ti.CharLimit = 100
+	ti.Width = 60
+	return ti
 }
 
 func (m *SourceWizard) View() string {
@@ -199,7 +221,7 @@ func (m *SourceWizard) View() string {
 	}
 
 	var b strings.Builder
-	b.WriteString("Create Bank Source\n")
+	b.WriteString(fmt.Sprintf("Create Bank Source for: %s\n", m.filename))
 	b.WriteString(strings.Repeat("-", 40))
 	b.WriteString("\n\n")
 
@@ -212,6 +234,7 @@ func (m *SourceWizard) View() string {
 			b.WriteString(fmt.Sprintf("  - %s\n", h))
 		}
 
+	// TODO: Should filter while typing based on listed columns to avoid typos
 	case stepDateColumn:
 		b.WriteString("Which column contains the transaction date?\n")
 		b.WriteString(m.inputs[0].View())
@@ -220,6 +243,7 @@ func (m *SourceWizard) View() string {
 			b.WriteString(fmt.Sprintf("  - %s\n", h))
 		}
 
+	// TODO: not clear what the format should be entered as, probably something like mm/dd/yyyy instead of actual values, should also show a row of data from the CSV
 	case stepDateFormat:
 		b.WriteString("Enter the date format (Go reference time: Mon Jan 2 15:04:05 MST 2006):\n")
 		b.WriteString("Common formats:\n")
@@ -228,6 +252,7 @@ func (m *SourceWizard) View() string {
 		b.WriteString("  20060102    (compact)\n")
 		b.WriteString(m.inputs[0].View())
 
+	// TODO: also should filter based on available columns
 	case stepDescColumn:
 		b.WriteString("Which column contains the description?\n")
 		b.WriteString(m.inputs[0].View())
@@ -270,4 +295,8 @@ func (m *SourceWizard) View() string {
 
 func (m *SourceWizard) Config() types.SourceConfig {
 	return m.config
+}
+
+func (m *SourceWizard) Cancelled() bool {
+	return m.err != nil
 }
