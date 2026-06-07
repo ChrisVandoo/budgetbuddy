@@ -53,7 +53,7 @@ func (p *Parser) ReadCSVFile(r io.Reader) error {
 		return fmt.Errorf("failed to find headers in csv file, require at least date, description, and amount")
 	}
 
-	p.Records = records[headerIndex:]
+	p.Records = records[headerIndex+1:]
 
 	return nil
 }
