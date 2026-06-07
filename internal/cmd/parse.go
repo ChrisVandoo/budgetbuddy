@@ -96,7 +96,7 @@ func processCSVFile(cmd *cobra.Command, path string) error {
 
 	transactions, err := parser.ParseRecords(config.Mapping, config.Name)
 	if err != nil {
-		return fmt.Errorf("parse %s: %w", path, err)
+		return fmt.Errorf("error parsing %s: %w", path, err)
 	}
 
 	imported := 0

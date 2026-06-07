@@ -99,17 +99,16 @@ func (p *Parser) ParseRecords(mapping types.SourceMapping, sourceName string) ([
 	}
 
 	var transactions []ParsedTransaction
+	expectedFieldsPerRecord := len(p.HeaderRow)
 	for _, row := range p.Records {
-		if len(row) <= dateIdx || len(row) <= descIdx {
-			continue
-		}
-		if !mapping.Amount.SingleColumn && (len(row) <= inIdx || len(row) <= outIdx) {
+		if len(row) < expectedFieldsPerRecord {
 			continue
 		}
 
 		dateVal := strings.TrimSpace(row[dateIdx])
 		descVal := strings.TrimSpace(row[descIdx])
-		if dateVal == "" || descVal == "" {
+		// We may encounter multiple header rows in a single CSV file. If that is the case just skip to the next row.
+		if dateVal == "" || descVal == "" || (dateVal == mapping.Date.Header && descVal == mapping.Description.Header) {
 			continue
 		}
 
@@ -117,7 +116,7 @@ func (p *Parser) ParseRecords(mapping types.SourceMapping, sourceName string) ([
 		if mapping.Amount.SingleColumn {
 			amt, err := NormalizeAmount(row[amountIdx], mapping.Amount)
 			if err != nil {
-				return nil, fmt.Errorf("parse amount on row %q: %w", descVal, err)
+				return nil, fmt.Errorf("failed to parse amount on row %q: %w", descVal, err)
 			}
 			amountCents = amt
 		} else {
