@@ -4,7 +4,6 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/ChrisVandoo/budgetbuddy/internal/types"
@@ -18,86 +17,106 @@ type ParsedTransaction struct {
 }
 
 type Parser struct {
-	SourceName string
-	Mapping    types.SourceMapping
+	HeaderRow []string
+	Records   [][]string
 }
 
-func NewParser(sourceName string, mapping types.SourceMapping) *Parser {
-	return &Parser{
-		SourceName: sourceName,
-		Mapping:    mapping,
-	}
+func NewParser() *Parser {
+	return &Parser{}
 }
 
-func (p *Parser) ParseFile(path string) ([]ParsedTransaction, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open file: %w", err)
-	}
-	defer f.Close()
-
-	return p.Parse(f)
-}
-
-func (p *Parser) Parse(r io.Reader) ([]ParsedTransaction, error) {
+// Reads a CSV file, finds the header row and records.
+func (p *Parser) ReadCSVFile(r io.Reader) error {
 	reader := csv.NewReader(r)
 	reader.TrimLeadingSpace = true
 	reader.LazyQuotes = true
+	// CSV file may have "bad" rows at the beginning of the file which we should ignore
+	reader.FieldsPerRecord = -1
 
 	records, err := reader.ReadAll()
 	if err != nil {
-		return nil, fmt.Errorf("read csv: %w", err)
+		return fmt.Errorf("failed to read csv: %w", err)
 	}
 
-	if len(records) < 2 {
-		return nil, fmt.Errorf("csv must have at least a header row and one data row")
+	var headerIndex int
+	for i, record := range records {
+		// Find the first row that has at least 3 columns as the header row, we require at least a transaction date, description, and amount.
+		// This makes a few assumptions, but should help filter out invalid lines.
+		if len(record) > 2 {
+			p.HeaderRow = record
+			headerIndex = i
+			break
+		}
 	}
 
-	headers := records[0]
-	dataRows := records[1:]
+	if p.HeaderRow == nil {
+		return fmt.Errorf("failed to find headers in csv file, require at least date, description, and amount")
+	}
 
-	dateIdx := findHeaderIndex(headers, p.Mapping.Date.Header)
-	descIdx := findHeaderIndex(headers, p.Mapping.Description.Header)
+	p.Records = records[headerIndex+1:]
+
+	return nil
+}
+
+// Returns the header record/row so that we can find the correct source mapping
+func (p *Parser) GetHeaderRecord() ([]string, error) {
+	if p.HeaderRow == nil {
+		return nil, fmt.Errorf("no header record found, read the CSV file before trying to get the header record")
+	}
+	return p.HeaderRow, nil
+}
+
+// Normalizes a list of CSV records based on a source mapping that maps a bank specific CSV format to a ParsedTransaction
+func (p *Parser) ParseRecords(mapping types.SourceMapping, sourceName string) ([]ParsedTransaction, error) {
+	if p.Records == nil || p.HeaderRow == nil {
+		return nil, fmt.Errorf("no records or header row found, read the CSV file before trying to parse the records")
+	}
+
+	if len(p.Records) < 1 {
+		return nil, fmt.Errorf("csv must have at one data row")
+	}
+
+	dateIdx := findHeaderIndex(p.HeaderRow, mapping.Date.Header)
+	descIdx := findHeaderIndex(p.HeaderRow, mapping.Description.Header)
 	if dateIdx == -1 || descIdx == -1 {
 		return nil, fmt.Errorf("required headers not found in CSV")
 	}
 
 	var amountIdx int
 	var inIdx, outIdx int
-	if p.Mapping.Amount.SingleColumn {
-		amountIdx = findHeaderIndex(headers, p.Mapping.Amount.HeaderOut)
+	if mapping.Amount.SingleColumn {
+		amountIdx = findHeaderIndex(p.HeaderRow, mapping.Amount.HeaderOut)
 		if amountIdx == -1 {
-			return nil, fmt.Errorf("amount header %q not found", p.Mapping.Amount.HeaderOut)
+			return nil, fmt.Errorf("amount header %q not found", mapping.Amount.HeaderOut)
 		}
 	} else {
-		inIdx = findHeaderIndex(headers, p.Mapping.Amount.HeaderIn)
-		outIdx = findHeaderIndex(headers, p.Mapping.Amount.HeaderOut)
+		inIdx = findHeaderIndex(p.HeaderRow, mapping.Amount.HeaderIn)
+		outIdx = findHeaderIndex(p.HeaderRow, mapping.Amount.HeaderOut)
 		if inIdx == -1 || outIdx == -1 {
 			return nil, fmt.Errorf("amount headers not found (in: %q, out: %q)",
-				p.Mapping.Amount.HeaderIn, p.Mapping.Amount.HeaderOut)
+				mapping.Amount.HeaderIn, mapping.Amount.HeaderOut)
 		}
 	}
 
 	var transactions []ParsedTransaction
-	for _, row := range dataRows {
-		if len(row) <= dateIdx || len(row) <= descIdx {
-			continue
-		}
-		if !p.Mapping.Amount.SingleColumn && (len(row) <= inIdx || len(row) <= outIdx) {
+	expectedFieldsPerRecord := len(p.HeaderRow)
+	for _, row := range p.Records {
+		if len(row) < expectedFieldsPerRecord {
 			continue
 		}
 
 		dateVal := strings.TrimSpace(row[dateIdx])
 		descVal := strings.TrimSpace(row[descIdx])
-		if dateVal == "" || descVal == "" {
+		// We may encounter multiple header rows in a single CSV file. If that is the case just skip to the next row.
+		if dateVal == "" || descVal == "" || (dateVal == mapping.Date.Header && descVal == mapping.Description.Header) {
 			continue
 		}
 
 		var amountCents int64
-		if p.Mapping.Amount.SingleColumn {
-			amt, err := NormalizeAmount(row[amountIdx], p.Mapping.Amount)
+		if mapping.Amount.SingleColumn {
+			amt, err := NormalizeAmount(row[amountIdx], mapping.Amount)
 			if err != nil {
-				return nil, fmt.Errorf("parse amount on row %q: %w", descVal, err)
+				return nil, fmt.Errorf("failed to parse amount on row %q: %w", descVal, err)
 			}
 			amountCents = amt
 		} else {
@@ -113,7 +132,7 @@ func (p *Parser) Parse(r io.Reader) ([]ParsedTransaction, error) {
 		}
 
 		transactions = append(transactions, ParsedTransaction{
-			Source:      p.SourceName,
+			Source:      sourceName,
 			Date:        dateVal,
 			Description: descVal,
 			AmountCents: amountCents,
@@ -131,17 +150,4 @@ func findHeaderIndex(headers []string, target string) int {
 		}
 	}
 	return -1
-}
-
-func ReadCSVHeaders(r io.Reader) ([]string, error) {
-	reader := csv.NewReader(r)
-	reader.TrimLeadingSpace = true
-	reader.LazyQuotes = true
-
-	headers, err := reader.Read()
-	if err != nil {
-		return nil, fmt.Errorf("read csv headers: %w", err)
-	}
-
-	return headers, nil
 }

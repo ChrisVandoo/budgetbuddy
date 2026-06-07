@@ -18,8 +18,10 @@ go_library(
         "//internal/categorize",
         "//internal/db",
         "//internal/parse",
+        "//internal/prompt",
         "//internal/types",
-        "@com_github_spf13_cobra//:go_default_library",
+        "@com_github_charmbracelet_bubbletea//:bubbletea",
+        "@com_github_spf13_cobra//:cobra",
     ],
 )
 

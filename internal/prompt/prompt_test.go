@@ -38,7 +38,7 @@ func TestCategorySelectorCreated(t *testing.T) {
 
 func TestSourceWizardCreated(t *testing.T) {
 	headers := []string{"Date", "Description", "Amount"}
-	wizard := prompt.NewSourceWizard(headers)
+	wizard := prompt.NewSourceWizard(headers, "")
 	if wizard == nil {
 		t.Fatal("expected non-nil SourceWizard")
 	}

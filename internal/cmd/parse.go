@@ -5,41 +5,41 @@ import (
 	"os"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
 	"github.com/ChrisVandoo/budgetbuddy/internal/categorize"
 	"github.com/ChrisVandoo/budgetbuddy/internal/parse"
-	"github.com/ChrisVandoo/budgetbuddy/internal/types"
+	"github.com/ChrisVandoo/budgetbuddy/internal/prompt"
 )
 
 func parseCmd() *cobra.Command {
-	var sourceName string
-
 	c := &cobra.Command{
 		Use:   "parse [paths...]",
 		Short: "Import CSV files",
 		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			for _, arg := range args {
-				info, err := os.Stat(arg)
+		RunE: func(cmd *cobra.Command, paths []string) error {
+			for _, path := range paths {
+				info, err := os.Stat(path)
 				if err != nil {
-					return fmt.Errorf("access %s: %w", arg, err)
+					return fmt.Errorf("access %s: %w", path, err)
 				}
 
 				if info.IsDir() {
-					entries, err := os.ReadDir(arg)
+					entries, err := os.ReadDir(path)
 					if err != nil {
-						return fmt.Errorf("read dir %s: %w", arg, err)
+						return fmt.Errorf("read dir %s: %w", path, err)
 					}
 					for _, entry := range entries {
 						if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".csv") {
-							if err := processCSVFile(cmd, arg+"/"+entry.Name(), sourceName); err != nil {
+							filename := fmt.Sprintf("%s/%s", path, entry.Name())
+							if err := processCSVFile(cmd, filename); err != nil {
 								return err
 							}
 						}
 					}
 				} else {
-					if err := processCSVFile(cmd, arg, sourceName); err != nil {
+					if err := processCSVFile(cmd, path); err != nil {
 						return err
 					}
 				}
@@ -47,21 +47,24 @@ func parseCmd() *cobra.Command {
 			return nil
 		},
 	}
-
-	c.Flags().StringVar(&sourceName, "source", "", "Source name (skip auto-detection)")
 	return c
 }
 
-func processCSVFile(cmd *cobra.Command, path, sourceName string) error {
+func processCSVFile(cmd *cobra.Command, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}
+	defer f.Close()
 
-	headers, err := parse.ReadCSVHeaders(f)
-	f.Close()
+	parser := parse.NewParser()
+	if err := parser.ReadCSVFile(f); err != nil {
+		return fmt.Errorf("failed to read %s: %w", path, err)
+	}
+
+	headers, err := parser.GetHeaderRecord()
 	if err != nil {
-		return fmt.Errorf("read headers from %s: %w", path, err)
+		return fmt.Errorf("failed to get headers for %s: %w", path, err)
 	}
 
 	sources, err := parse.LoadSources(sourcesPath)
@@ -69,48 +72,36 @@ func processCSVFile(cmd *cobra.Command, path, sourceName string) error {
 		return fmt.Errorf("load sources: %w", err)
 	}
 
-	srcName := sourceName
-	var mapping types.SourceMapping
-
-	if sourceName != "" {
-		found := false
-		for _, src := range sources.Sources {
-			if src.Name == sourceName {
-				mapping = src.Mapping
-				found = true
-				break
-			}
+	headerKey, config, found := parse.DetectSource(headers, sources)
+	if !found {
+		wizard := prompt.NewSourceWizard(headers, path)
+		prog := tea.NewProgram(wizard)
+		model, err := prog.Run()
+		if err != nil {
+			return fmt.Errorf("source wizard: %w", err)
 		}
-		if !found {
-			return fmt.Errorf("source %q not found in config", sourceName)
+		wiz := model.(*prompt.SourceWizard)
+		if wiz.Cancelled() {
+			return fmt.Errorf("source creation cancelled")
 		}
-	} else {
-		_, config, found := parse.DetectSource(headers, sources)
-		if !found {
-			if len(sources.Sources) == 0 {
-				return fmt.Errorf("no sources configured")
-			}
-			return fmt.Errorf("unknown headers in %s", path)
+		newConfig := wiz.Config()
+		headerKey = strings.Join(headers, ",")
+		sources.Sources[headerKey] = newConfig
+		if err := parse.SaveSources(sourcesPath, sources); err != nil {
+			return fmt.Errorf("save new source: %w", err)
 		}
-		srcName = config.Name
-		mapping = config.Mapping
+		fmt.Fprintf(cmd.OutOrStdout(), "Created new source '%s' for %s\n", newConfig.Name, headerKey)
+		config = &newConfig
 	}
 
-	f, err = os.Open(path)
+	transactions, err := parser.ParseRecords(config.Mapping, config.Name)
 	if err != nil {
-		return fmt.Errorf("re-open %s: %w", path, err)
-	}
-	defer f.Close()
-
-	parser := parse.NewParser(srcName, mapping)
-	txns, err := parser.Parse(f)
-	if err != nil {
-		return fmt.Errorf("parse %s: %w", path, err)
+		return fmt.Errorf("error parsing %s: %w", path, err)
 	}
 
 	imported := 0
 	skipped := 0
-	for _, txn := range txns {
+	for _, txn := range transactions {
 		_, err := database.InsertTransaction(txn.Source, txn.Date, txn.Description, txn.AmountCents, nil)
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE constraint") {

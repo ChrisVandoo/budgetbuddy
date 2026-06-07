@@ -142,10 +142,6 @@ func TestDetectSourceCaseInsensitive(t *testing.T) {
 }
 
 func TestParseCSV_SingleColumn(t *testing.T) {
-	csv := `Transaction Date,Description,Amount
-2026-01-15,AMAZON.CA,50.00
-2026-01-16,WALMART,25.50`
-
 	mapping := types.SourceMapping{
 		Date:        types.DateMapping{Header: "Transaction Date", Format: "2006-01-02"},
 		Description: types.DescriptionMapping{Header: "Description"},
@@ -157,8 +153,14 @@ func TestParseCSV_SingleColumn(t *testing.T) {
 		},
 	}
 
-	parser := parse.NewParser("Test Source", mapping)
-	txns, err := parser.Parse(strings.NewReader(csv))
+	parser := &parse.Parser{
+		HeaderRow: []string{"Transaction Date", "Description", "Amount"},
+		Records: [][]string{
+			{"2026-01-15", "AMAZON.CA", "50.00"},
+			{"2026-01-16", "WALMART", "25.50"},
+		},
+	}
+	txns, err := parser.ParseRecords(mapping, "Test Source")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -180,10 +182,6 @@ func TestParseCSV_SingleColumn(t *testing.T) {
 }
 
 func TestParseCSV_DualColumn(t *testing.T) {
-	csv := `Date,Transaction Details,Funds Out,Funds In
-01/15/2026,AMAZON.CA,50.00,
-01/16/2026,PAYCHECK,,1000.00`
-
 	mapping := types.SourceMapping{
 		Date:        types.DateMapping{Header: "Date"},
 		Description: types.DescriptionMapping{Header: "Transaction Details"},
@@ -195,8 +193,14 @@ func TestParseCSV_DualColumn(t *testing.T) {
 		},
 	}
 
-	parser := parse.NewParser("Simplii", mapping)
-	txns, err := parser.Parse(strings.NewReader(csv))
+	parser := &parse.Parser{
+		HeaderRow: []string{"Date", "Transaction Details", "Funds Out", "Funds In"},
+		Records: [][]string{
+			{"01/15/2026", "AMAZON.CA", "50.00", ""},
+			{"01/16/2026", "PAYCHECK", "", "1000.00"},
+		},
+	}
+	txns, err := parser.ParseRecords(mapping, "Simplii")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -212,10 +216,6 @@ func TestParseCSV_DualColumn(t *testing.T) {
 }
 
 func TestParseCSV_EmptyRows(t *testing.T) {
-	csv := `Date,Amount,Desc
-2026-01-15,50.00,Test1
-,,`
-
 	mapping := types.SourceMapping{
 		Date:        types.DateMapping{Header: "Date"},
 		Description: types.DescriptionMapping{Header: "Desc"},
@@ -227,8 +227,14 @@ func TestParseCSV_EmptyRows(t *testing.T) {
 		},
 	}
 
-	parser := parse.NewParser("Test", mapping)
-	txns, err := parser.Parse(strings.NewReader(csv))
+	parser := &parse.Parser{
+		HeaderRow: []string{"Date", "Amount", "Desc"},
+		Records: [][]string{
+			{"2026-01-15", "50.00", "Test1"},
+			{"", "", ""},
+		},
+	}
+	txns, err := parser.ParseRecords(mapping, "Test")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -238,8 +244,6 @@ func TestParseCSV_EmptyRows(t *testing.T) {
 }
 
 func TestParseCSV_OnlyHeaders(t *testing.T) {
-	csv := `Date,Amount,Desc`
-
 	mapping := types.SourceMapping{
 		Date:        types.DateMapping{Header: "Date"},
 		Description: types.DescriptionMapping{Header: "Desc"},
@@ -251,17 +255,17 @@ func TestParseCSV_OnlyHeaders(t *testing.T) {
 		},
 	}
 
-	parser := parse.NewParser("Test", mapping)
-	_, err := parser.Parse(strings.NewReader(csv))
+	parser := &parse.Parser{
+		HeaderRow: []string{"Date", "Amount", "Desc"},
+		Records:   [][]string{},
+	}
+	_, err := parser.ParseRecords(mapping, "Test")
 	if err == nil {
 		t.Fatal("expected error for csv with only headers")
 	}
 }
 
 func TestParseCSV_MissingHeaders(t *testing.T) {
-	csv := `Date,Amount
-2026-01-15,50.00`
-
 	mapping := types.SourceMapping{
 		Date:        types.DateMapping{Header: "Date"},
 		Description: types.DescriptionMapping{Header: "Missing"},
@@ -273,8 +277,13 @@ func TestParseCSV_MissingHeaders(t *testing.T) {
 		},
 	}
 
-	parser := parse.NewParser("Test", mapping)
-	_, err := parser.Parse(strings.NewReader(csv))
+	parser := &parse.Parser{
+		HeaderRow: []string{"Date", "Amount", "Desc"},
+		Records: [][]string{
+			{"2026-01-15", "50.00", "Test"},
+		},
+	}
+	_, err := parser.ParseRecords(mapping, "Test")
 	if err == nil {
 		t.Fatal("expected error for missing headers")
 	}
@@ -284,15 +293,129 @@ func TestReadCSVHeaders(t *testing.T) {
 	csv := `Date,Amount,Description
 2026-01-15,50.00,Test`
 
-	headers, err := parse.ReadCSVHeaders(strings.NewReader(csv))
+	parser := parse.NewParser()
+	if err := parser.ReadCSVFile(strings.NewReader(csv)); err != nil {
+		t.Fatalf("ReadCSVFile failed: %v", err)
+	}
+	headers, err := parser.GetHeaderRecord()
 	if err != nil {
-		t.Fatalf("ReadCSVHeaders failed: %v", err)
+		t.Fatalf("GetHeaderRecord failed: %v", err)
 	}
 	if len(headers) != 3 {
 		t.Fatalf("expected 3 headers, got %d", len(headers))
 	}
 	if headers[0] != "Date" {
 		t.Errorf("expected Date, got %s", headers[0])
+	}
+}
+
+func TestReadCSVFile_ExtraLinesBeforeHeader(t *testing.T) {
+	csv := `Account Statement
+Period: January 2026
+Date,Amount,Desc
+2026-01-15,50.00,Test1`
+
+	parser := parse.NewParser()
+	if err := parser.ReadCSVFile(strings.NewReader(csv)); err != nil {
+		t.Fatalf("ReadCSVFile failed: %v", err)
+	}
+
+	headers, err := parser.GetHeaderRecord()
+	if err != nil {
+		t.Fatalf("GetHeaderRecord failed: %v", err)
+	}
+	if len(headers) != 3 {
+		t.Fatalf("expected 3 headers, got %d", len(headers))
+	}
+	if headers[0] != "Date" {
+		t.Errorf("expected Date, got %s", headers[0])
+	}
+	if headers[1] != "Amount" {
+		t.Errorf("expected Amount, got %s", headers[1])
+	}
+	if headers[2] != "Desc" {
+		t.Errorf("expected Desc, got %s", headers[2])
+	}
+
+	if len(parser.Records) != 1 {
+		t.Fatalf("expected 1 data record, got %d", len(parser.Records))
+	}
+	if parser.Records[0][0] != "2026-01-15" {
+		t.Errorf("expected 2026-01-15, got %s", parser.Records[0][0])
+	}
+	if parser.Records[0][1] != "50.00" {
+		t.Errorf("expected 50.00, got %s", parser.Records[0][1])
+	}
+}
+
+func TestReadCSVFile_Normal(t *testing.T) {
+	csv := `Date,Amount,Desc
+2026-01-15,50.00,Test1
+2026-01-16,25.50,Test2`
+
+	parser := parse.NewParser()
+	if err := parser.ReadCSVFile(strings.NewReader(csv)); err != nil {
+		t.Fatalf("ReadCSVFile failed: %v", err)
+	}
+
+	headers, err := parser.GetHeaderRecord()
+	if err != nil {
+		t.Fatalf("GetHeaderRecord failed: %v", err)
+	}
+	if len(headers) != 3 {
+		t.Fatalf("expected 3 headers, got %d", len(headers))
+	}
+
+	if len(parser.Records) != 2 {
+		t.Fatalf("expected 2 data records, got %d", len(parser.Records))
+	}
+	if parser.Records[0][0] != "2026-01-15" {
+		t.Errorf("expected 2026-01-15, got %s", parser.Records[0][0])
+	}
+	if parser.Records[1][2] != "Test2" {
+		t.Errorf("expected Test2, got %s", parser.Records[1][2])
+	}
+}
+
+func TestReadCSVFile_OnlyHeader(t *testing.T) {
+	csv := `Date,Amount,Desc`
+
+	parser := parse.NewParser()
+	if err := parser.ReadCSVFile(strings.NewReader(csv)); err != nil {
+		t.Fatalf("ReadCSVFile failed: %v", err)
+	}
+
+	headers, err := parser.GetHeaderRecord()
+	if err != nil {
+		t.Fatalf("GetHeaderRecord failed: %v", err)
+	}
+	if len(headers) != 3 {
+		t.Fatalf("expected 3 headers, got %d", len(headers))
+	}
+
+	if len(parser.Records) != 0 {
+		t.Fatalf("expected 0 records (header excluded), got %d", len(parser.Records))
+	}
+}
+
+func TestReadCSVFile_NoValidHeader(t *testing.T) {
+	csv := `one,two
+foo,bar`
+
+	parser := parse.NewParser()
+	err := parser.ReadCSVFile(strings.NewReader(csv))
+	if err == nil {
+		t.Fatal("expected error for CSV without a valid header row")
+	}
+}
+
+func TestReadCSVFile_Empty(t *testing.T) {
+	csv := ``
+
+	parser := parse.NewParser()
+	err := parser.ReadCSVFile(strings.NewReader(csv))
+	if err == nil {
+		t.Fatal("expected error for empty CSV")
 	}
 }
 
