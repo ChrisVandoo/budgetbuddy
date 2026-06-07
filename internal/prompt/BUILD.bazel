@@ -11,8 +11,8 @@ go_library(
     deps = [
         "//internal/db",
         "//internal/types",
-        "@com_github_charmbracelet_bubbles//textinput:go_default_library",
-        "@com_github_charmbracelet_bubbletea//:go_default_library",
+        "@com_github_charmbracelet_bubbles//textinput",
+        "@com_github_charmbracelet_bubbletea//:bubbletea",
     ],
 )
 
