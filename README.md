@@ -7,4 +7,4 @@ tbd
 
 ## Usage
 
-tbd
+NOTE: this is still a WIP and not actually functional. Stay tuned for a working utility.
