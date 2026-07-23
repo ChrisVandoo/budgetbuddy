@@ -3,7 +3,7 @@ a friendly budgeting utility
 
 ## Installation
 
-tbd
+tbd!
 
 ## Usage
 
